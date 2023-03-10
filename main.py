@@ -4,7 +4,6 @@ import telebot
 from telebot import types
 import sqlite3
 import re
-import logging
 
 
 
@@ -26,8 +25,9 @@ def send_welcome(message):
 
 @bot.callback_query_handler(func=lambda c: c.data == 'login')
 def login(call):
+    """Проверяем что пользователь есть в БД если он есть в БД то проходим на следующий этап"""
     id = call.from_user.id
-    res = cur.execute("SELECT telegram_id FROM utv_api_customuser WHERE telegram_id='%s'" % id)
+    res = cur.execute("SELECT * FROM utv_api_customuser WHERE telegram_id='%s'" %id)
     id_bd = res.fetchone()
     if id_bd:
         markup = types.InlineKeyboardMarkup()
@@ -40,12 +40,17 @@ def login(call):
 
 @bot.callback_query_handler(func=lambda c: c.data == 'cards')
 def cards(call):
+    """Выдаём пользователю его карточки"""
     id = call.from_user.id
-    res = cur.execute(
-        "SELECT utv_api_cards.id, title FROM utv_api_cards "
-        "LEFT JOIN utv_api_customuser "
-        "ON utv_api_customuser.id=utv_api_cards.author_id "
-        "WHERE utv_api_customuser.telegram_id='%s'" % id)
+    res2 = cur.execute("SELECT * FROM utv_api_customuser WHERE telegram_id='%s'" % id)
+    id_user = res2.fetchone()[0]
+    res = cur.execute("SELECT utv_api_cards.id, utv_api_cards.title FROM utv_api_cards "
+                      "WHERE utv_api_cards.author_id='%s' "
+                      "UNION "
+                      "SELECT utv_api_cards.id, utv_api_cards.title FROM utv_api_cards "
+                      "LEFT JOIN utv_api_cards_performers "
+                      "ON utv_api_cards.id = utv_api_cards_performers.cards_id "
+                      "WHERE utv_api_cards_performers.customuser_id='%s'" % (id_user, id_user))
     cards = res.fetchall()
     markup = types.InlineKeyboardMarkup()
     list_btn = []
@@ -54,12 +59,12 @@ def cards(call):
         id = i[0]
         list_btn.append(types.InlineKeyboardButton(f'{title}', callback_data=f'cards/{id}/'))
     markup.add(*list_btn)
-    logging.info(f'Получил список карточек')
     bot.send_message(call.message.chat.id, 'Вот ваши созданные карточки', reply_markup=markup)
+
 
 @bot.callback_query_handler(func=lambda c: 0 < len(re.findall(r'cards\/\d{1,}\/', c.data)))
 def cards_detail(call):
-    # Обрабатываем кнопку пользователя
+    """Выдаём пользователю его конкретную карточку"""
     id_card = re.findall(r'\d{1,}', call.data)
     res = cur.execute("SELECT * FROM utv_api_cards "
                       "WHERE id='%s'" % int(id_card[0]))
@@ -87,6 +92,7 @@ def cards_detail(call):
 
 @bot.callback_query_handler(func=lambda c: 0 < len(re.findall(r'table\/\d{1,}\/', c.data)))
 def table_detail(call):
+    """Выдаём пользователю таблицу с расчётами"""
     id_table = re.findall(r'\d{1,}', call.data)
     res = cur.execute("SELECT * FROM utv_api_tableproject "
                       "WHERE id='%s'" % int(id_table[0]))
@@ -142,15 +148,7 @@ def table_detail(call):
     txt.append(created)
     update = f'Обновлена: {table[25]}'
     txt.append(update)
-    # Посмотри созданные excel
-    res2 = cur.execute("SELECT * FROM utv_api_tableexcel "
-                       "WHERE table_id='%s'" % int(id_table[0]))
-    list_btn = []
-    for i in res2.fetchall():
-        list_btn.append(types.InlineKeyboardButton(f'{i[1]}', callback_data=f'excel/{i[0]}/'))
-    markup = types.InlineKeyboardMarkup()
-    markup.add(*list_btn)
-    bot.send_message(call.message.chat.id, ',\n'.join(txt), reply_markup=markup)
+    bot.send_message(call.message.chat.id, ',\n'.join(txt))
 
 
 bot.infinity_polling()
